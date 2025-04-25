@@ -6,6 +6,11 @@
     
     // Initialize the AJAX pricing functionality
     function initAjaxPricing() {
+        // Check if AJAX pricing should be disabled based on settings
+        if (shouldDisableAjaxPricing()) {
+            return;
+        }
+        
         // Find all price placeholders on the page
         const priceElements = document.querySelectorAll('.ajax-price');
         
@@ -102,6 +107,31 @@
         if (originalContent) {
             placeholder.innerHTML = originalContent;
         }
+    }
+    
+    // Check if AJAX pricing should be disabled based on settings
+    function shouldDisableAjaxPricing() {
+        // Disable when cart has items if setting is enabled
+        if (wc_ajax_pricing_params.disable_with_cart === 'yes' && hasCartItems()) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    // Check if the cart has items by looking at WooCommerce cart fragments cookie
+    function hasCartItems() {
+        // Check for WooCommerce cart fragments cookie
+        const wooCartCookie = getCookie('woocommerce_cart_hash');
+        
+        // If the cookie exists and has a value, the cart has items
+        return wooCartCookie && wooCartCookie.length > 0;
+    }
+    
+    // Helper function to get cookie value by name
+    function getCookie(name) {
+        const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+        return match ? match[2] : null;
     }
     
     // Initialize when DOM is ready

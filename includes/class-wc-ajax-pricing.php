@@ -20,12 +20,8 @@ class WC_AJAX_Pricing {
         add_action('wp_ajax_get_wc_prices', array($this, 'get_ajax_prices'));
         add_action('wp_ajax_nopriv_get_wc_prices', array($this, 'get_ajax_prices'));
         
-        // Add settings link on plugin page
-        add_filter('plugin_action_links_' . plugin_basename(WC_AJAX_PRICING_PATH . 'wc-ajax-pricing.php'), 
-            array($this, 'add_plugin_settings_link'));
-            
-        // Add settings page
-        add_action('admin_menu', array($this, 'add_admin_menu'));
+        // Include admin settings
+        require_once WC_AJAX_PRICING_PATH . 'admin/settings-page.php';
     }
     
     /**
@@ -57,7 +53,9 @@ class WC_AJAX_Pricing {
         wp_localize_script('wc-ajax-pricing', 'wc_ajax_pricing_params', array(
             'ajax_url' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('wc-ajax-pricing-nonce'),
-            'loading_text' => __('Loading price...', 'wc-ajax-pricing')
+            'loading_text' => get_option('wc_ajax_pricing_loading_text', __('Loading...', 'wc-ajax-pricing')),
+            'disable_with_cart' => get_option('wc_ajax_pricing_disable_with_cart', 'no')
+            // We don't include dynamic user data here as it would be cached
         ));
         
         // Enqueue the script only on relevant pages
@@ -76,6 +74,16 @@ class WC_AJAX_Pricing {
     public function replace_price_with_placeholder($price_html, $product) {
         // Skip in admin area
         if (is_admin()) {
+            return $price_html;
+        }
+        
+        // Check if we should disable AJAX pricing for logged in users
+        if (get_option('wc_ajax_pricing_disable_for_logged_in', 'no') === 'yes' && is_user_logged_in()) {
+            return $price_html;
+        }
+        
+        // Check if we should disable AJAX pricing when cart has items
+        if (get_option('wc_ajax_pricing_disable_with_cart', 'no') === 'yes' && WC()->cart && !WC()->cart->is_empty()) {
             return $price_html;
         }
         
@@ -134,37 +142,4 @@ class WC_AJAX_Pricing {
         wp_send_json_success(array('prices' => $prices));
     }
     
-    /**
-     * Add settings link on plugin page
-     * 
-     * @param array $links Existing links
-     * @return array Modified links
-     */
-    public function add_plugin_settings_link($links) {
-        $settings_link = '<a href="' . admin_url('admin.php?page=wc-ajax-pricing-settings') . '">' . 
-            __('Settings', 'wc-ajax-pricing') . '</a>';
-        array_unshift($links, $settings_link);
-        return $links;
-    }
-    
-    /**
-     * Add admin menu item
-     */
-    public function add_admin_menu() {
-        add_submenu_page(
-            'woocommerce',
-            __('AJAX Pricing Settings', 'wc-ajax-pricing'),
-            __('AJAX Pricing', 'wc-ajax-pricing'),
-            'manage_options',
-            'wc-ajax-pricing-settings',
-            array($this, 'render_settings_page')
-        );
-    }
-    
-    /**
-     * Render settings page
-     */
-    public function render_settings_page() {
-        include WC_AJAX_PRICING_PATH . 'admin/settings-page.php';
-    }
 }

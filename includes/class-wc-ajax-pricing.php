@@ -19,6 +19,14 @@ class WC_AJAX_Pricing {
         // Register AJAX handlers
         add_action('wp_ajax_get_wc_prices', array($this, 'get_ajax_prices'));
         add_action('wp_ajax_nopriv_get_wc_prices', array($this, 'get_ajax_prices'));
+
+        // Ensure variation price transients are keyed per user tax context.
+        // WooCommerce 10.5 changed how the cache hash is generated (PR #61286):
+        // it no longer serialises full callback objects, so user-specific state
+        // (VAT exemption, tax location) no longer implicitly differentiates
+        // cache entries. We must add that context explicitly so that two users
+        // with different tax profiles cannot share the same cached prices.
+        add_filter('woocommerce_get_variation_prices_hash', array($this, 'add_user_context_to_variation_prices_hash'), 10, 3);
         
         // Include admin settings
         require_once WC_AJAX_PRICING_PATH . 'admin/settings-page.php';
@@ -141,5 +149,34 @@ class WC_AJAX_Pricing {
         
         wp_send_json_success(array('prices' => $prices));
     }
-    
+
+    /**
+     * Add user-specific tax context to the variation prices cache hash.
+     *
+     * WooCommerce 10.5 (PR #61286) changed hash generation so it no longer
+     * serialises callback objects. Without this filter, users with different
+     * VAT/tax profiles can collide on the same transient cache key and receive
+     * incorrect prices. We add the minimal set of data that distinguishes one
+     * tax profile from another so that each unique combination gets its own
+     * cache entry while still allowing users with identical profiles to share.
+     *
+     * @param array      $price_hash  Existing hash components.
+     * @param WC_Product $product     The variable product.
+     * @param bool       $for_display Whether prices are for display (inc. tax).
+     * @return array
+     */
+    public function add_user_context_to_variation_prices_hash( $price_hash, $product, $for_display ) {
+        $price_hash[] = get_current_user_id();
+
+        if ( WC()->customer ) {
+            $price_hash[] = (int) WC()->customer->get_is_vat_exempt();
+            $price_hash[] = WC()->customer->get_billing_country();
+            $price_hash[] = WC()->customer->get_billing_state();
+            $price_hash[] = WC()->customer->get_shipping_country();
+            $price_hash[] = WC()->customer->get_shipping_state();
+        }
+
+        return $price_hash;
+    }
+
 }

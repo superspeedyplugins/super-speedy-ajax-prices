@@ -72,3 +72,7 @@ Developers can use these action hooks to extend functionality:
 ## License
 
 GPL v2 or later
+
+## Changelog
+
+* 1.0.2 - added user context to new cache hash to try and fix variation pricing issue for Zippas

@@ -118,6 +118,8 @@ class WC_AJAX_Pricing {
     public function get_ajax_prices() {
         // Verify nonce
         check_ajax_referer('wc-ajax-pricing-nonce', 'nonce');
+
+        $this->maybe_load_customer_context();
         
         // Get product IDs from request
         $product_ids = isset($_POST['product_ids']) ? array_map('absint', $_POST['product_ids']) : array();
@@ -166,10 +168,17 @@ class WC_AJAX_Pricing {
      * @return array
      */
     public function add_user_context_to_variation_prices_hash( $price_hash, $product, $for_display ) {
-        $price_hash[] = get_current_user_id();
+        $this->maybe_load_customer_context();
 
         if ( WC()->customer ) {
+            $taxable_address = WC()->customer->get_taxable_address();
+            if ( is_array( $taxable_address ) ) {
+                $price_hash[] = implode( ':', $taxable_address );
+            }
+
             $price_hash[] = (int) WC()->customer->get_is_vat_exempt();
+
+            // Keep these for backward compatibility with sites that depend on them.
             $price_hash[] = WC()->customer->get_billing_country();
             $price_hash[] = WC()->customer->get_billing_state();
             $price_hash[] = WC()->customer->get_shipping_country();
@@ -177,6 +186,15 @@ class WC_AJAX_Pricing {
         }
 
         return $price_hash;
+    }
+
+    /**
+     * Ensure WooCommerce session/customer context is available for AJAX requests.
+     */
+    private function maybe_load_customer_context() {
+        if ( function_exists( 'wc_load_cart' ) ) {
+            wc_load_cart();
+        }
     }
 
 }

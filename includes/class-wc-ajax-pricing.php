@@ -20,6 +20,16 @@ class WC_AJAX_Pricing {
         add_action('wp_ajax_get_wc_prices', array($this, 'get_ajax_prices'));
         add_action('wp_ajax_nopriv_get_wc_prices', array($this, 'get_ajax_prices'));
 
+        // Fix variation prices for tax-exempt locations.
+        // When prices are entered inclusive of tax and the customer is in a
+        // location with no tax, the base-country tax must be subtracted from
+        // the raw variation prices so archive/product pages show the correct
+        // ex-tax amount. We hook all three price filters and the hash filter.
+        add_filter('woocommerce_variation_prices_price', array($this, 'adjust_variation_price_for_tax_exempt'), 10, 3);
+        add_filter('woocommerce_variation_prices_regular_price', array($this, 'adjust_variation_price_for_tax_exempt'), 10, 3);
+        add_filter('woocommerce_variation_prices_sale_price', array($this, 'adjust_variation_price_for_tax_exempt'), 10, 3);
+        add_filter('woocommerce_get_variation_prices_hash', array($this, 'add_tax_location_to_prices_hash'), 10, 3);
+
         // Include admin settings
         require_once WC_AJAX_PRICING_PATH . 'admin/settings-page.php';
     }
@@ -144,6 +154,152 @@ class WC_AJAX_Pricing {
         }
         
         wp_send_json_success(array('prices' => $prices));
+    }
+
+    /**
+     * Determine the customer's tax location based on WooCommerce configuration.
+     *
+     * Respects the 'woocommerce_tax_based_on' setting (shipping, billing, or base)
+     * and falls back to the WC_Customer object when available (which handles
+     * geolocation for guests via the 'woocommerce_default_customer_address' option).
+     *
+     * @return array Tax location as [ country, state, postcode, city ], or empty array.
+     */
+    private function get_customer_tax_location() {
+        if ( ! empty( WC()->customer ) ) {
+            return WC()->customer->get_taxable_address();
+        }
+        return array();
+    }
+
+    /**
+     * Check whether the customer in their current tax location is effectively
+     * tax-exempt for a given tax class.
+     *
+     * A customer is considered tax-exempt when:
+     *  - They are explicitly marked VAT-exempt on the WC_Customer object, OR
+     *  - Their resolved tax location yields zero matching tax rates for the
+     *    product's tax class (e.g. shipping to a country with no tax records).
+     *
+     * @param string $tax_class The product tax class (empty string = standard).
+     * @return bool True if the customer should not be charged tax.
+     */
+    private function customer_is_tax_exempt_for_class( $tax_class = '' ) {
+        // Explicitly marked VAT-exempt (e.g. via EU VAT number plugin).
+        if ( ! empty( WC()->customer ) && WC()->customer->get_is_vat_exempt() ) {
+            return true;
+        }
+
+        // Resolve the customer's tax location.
+        $location = $this->get_customer_tax_location();
+
+        if ( empty( $location ) ) {
+            // No location available — cannot determine; assume not exempt.
+            return false;
+        }
+
+        // If the customer location is the same as the base store location,
+        // they are definitely not exempt (they pay the base tax).
+        $base_country  = WC()->countries->get_base_country();
+        $base_state    = WC()->countries->get_base_state();
+
+        if ( $location[0] === $base_country && $location[1] === $base_state ) {
+            return false;
+        }
+
+        // Look up tax rates for the customer's location.
+        $customer_rates = WC_Tax::get_rates_from_location(
+            sanitize_title( $tax_class ),
+            $location
+        );
+
+        // If no rates match the customer's location, they are tax-exempt.
+        return empty( $customer_rates );
+    }
+
+    /**
+     * Adjust a variation's raw price when the customer is in a tax-exempt location.
+     *
+     * This filter runs on 'woocommerce_variation_prices_price',
+     * 'woocommerce_variation_prices_regular_price', and
+     * 'woocommerce_variation_prices_sale_price'.
+     *
+     * When the store is configured to enter prices inclusive of tax
+     * ('woocommerce_prices_include_tax' = 'yes') and the customer's resolved
+     * tax location has no matching tax rates, the base-country tax component
+     * must be removed from the stored price. This mirrors the logic that
+     * wc_get_price_excluding_tax() uses (subtracting base tax rates) but
+     * applies it at the variation-price-cache level so that archive pages and
+     * product detail pages show the correct amount before the item reaches
+     * the cart.
+     *
+     * @param string|float $price     The variation's raw price (inclusive of base tax).
+     * @param WC_Product   $variation The variation product object.
+     * @param WC_Product   $product   The parent variable product object.
+     * @return string|float Adjusted price with base tax removed, or original price.
+     */
+    public function adjust_variation_price_for_tax_exempt( $price, $variation, $product ) {
+        // Only act when prices were entered inclusive of tax.
+        if ( ! wc_tax_enabled() || ! wc_prices_include_tax() ) {
+            return $price;
+        }
+
+        // Nothing to adjust on empty prices.
+        if ( '' === $price || ! is_numeric( $price ) ) {
+            return $price;
+        }
+
+        // Only adjust for taxable products.
+        if ( ! $variation->is_taxable() ) {
+            return $price;
+        }
+
+        // Check if the customer is effectively tax-exempt for this tax class.
+        $tax_class = $variation->get_tax_class( 'unfiltered' );
+
+        if ( ! $this->customer_is_tax_exempt_for_class( $tax_class ) ) {
+            return $price;
+        }
+
+        // Get the base store tax rates for this product's tax class.
+        $base_rates = WC_Tax::get_base_tax_rates( $tax_class );
+
+        if ( empty( $base_rates ) ) {
+            return $price;
+        }
+
+        // Calculate the tax that is embedded in the inclusive price and subtract it.
+        $taxes      = WC_Tax::calc_tax( (float) $price, $base_rates, true );
+        $tax_amount = array_sum( $taxes );
+
+        return (float) $price - $tax_amount;
+    }
+
+    /**
+     * Include the customer's tax location in the variation prices cache hash.
+     *
+     * Because our 'woocommerce_variation_prices_price' filter adjusts prices
+     * based on the customer's geographic tax location, we must ensure that
+     * different locations produce different cache keys. Otherwise a price
+     * calculated for a Greek customer (with VAT) could be served from cache
+     * to a US customer (without VAT), or vice-versa.
+     *
+     * @param array      $price_hash Array of factors used to build the cache key.
+     * @param WC_Product $product    The variable product object.
+     * @param bool       $for_display Whether prices are for display.
+     * @return array Modified hash array.
+     */
+    public function add_tax_location_to_prices_hash( $price_hash, $product, $for_display ) {
+        if ( ! wc_tax_enabled() || ! wc_prices_include_tax() ) {
+            return $price_hash;
+        }
+
+        $location = $this->get_customer_tax_location();
+
+        // Add the full tax location so each unique location gets its own cache.
+        $price_hash[] = 'tax_location_' . implode( '_', $location );
+
+        return $price_hash;
     }
 
 }

@@ -43,8 +43,15 @@ class WC_AJAX_Pricing {
         // ensures correct price display for both simple and variable products
         // regardless of how the customer's location was determined.
         //
-        // Hook on 'wp' for normal page loads (after WC customer is initialised).
-        add_action( 'wp', array( $this, 'maybe_set_vat_exempt_from_geolocation' ), 20 );
+        // We hook on 'woocommerce_cart_loaded_from_session' rather than 'wp'
+        // because:
+        //   1. It fires during 'init' — BEFORE WC_Cart::calculate_totals()
+        //      runs, so cart totals also use the correct VAT-exempt state.
+        //   2. It fires for admin-ajax.php requests (e.g. ?wc-ajax= endpoints,
+        //      cart fragment updates) where 'wp' never fires.
+        //   3. WC()->customer is guaranteed to have the session country loaded
+        //      by the time this action fires.
+        add_action( 'woocommerce_cart_loaded_from_session', array( $this, 'maybe_set_vat_exempt_from_geolocation' ) );
         
         // Include admin settings
         require_once WC_AJAX_PRICING_PATH . 'admin/settings-page.php';
@@ -252,8 +259,9 @@ class WC_AJAX_Pricing {
      *
      * In all cases we include is_vat_exempt, which correctly reflects the
      * fix from maybe_set_vat_exempt_from_geolocation() because that method
-     * runs on the 'wp' hook (priority 20) before prices are rendered, and
-     * during AJAX it is called explicitly at the start of get_ajax_prices().
+     * now runs on 'woocommerce_cart_loaded_from_session' (before price
+     * rendering and before calculate_totals), and as an explicit call at the
+     * start of get_ajax_prices() as a safety net.
      *
      * @param array      $price_hash  Existing hash components.
      * @param WC_Product $product     The variable product.

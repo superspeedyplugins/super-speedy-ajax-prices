@@ -157,6 +157,20 @@ class WC_AJAX_Pricing {
     }
 
     /**
+     * Debug logging helper. Writes to the WooCommerce log file.
+     * Remove or disable after debugging is complete.
+     *
+     * @param string $message The message to log.
+     */
+    private function debug_log( $message ) {
+        if ( 1==2 && function_exists( 'wc_get_logger' ) ) {
+            wc_get_logger()->debug( $message, array( 'source' => 'super-speedy-tax-debug' ) );
+        } else {
+            error_log( '[SuperSpeedy Tax Debug] ' . $message );
+        }
+    }
+
+    /**
      * Determine the customer's tax location based on WooCommerce configuration.
      *
      * Respects the 'woocommerce_tax_based_on' setting (shipping, billing, or base)
@@ -167,8 +181,11 @@ class WC_AJAX_Pricing {
      */
     private function get_customer_tax_location() {
         if ( ! empty( WC()->customer ) ) {
-            return WC()->customer->get_taxable_address();
+            $location = WC()->customer->get_taxable_address();
+            $this->debug_log( 'get_customer_tax_location() => ' . wp_json_encode( $location ) );
+            return $location;
         }
+        $this->debug_log( 'get_customer_tax_location() => WC()->customer is empty, returning empty array' );
         return array();
     }
 
@@ -185,8 +202,44 @@ class WC_AJAX_Pricing {
      * @return bool True if the customer should not be charged tax.
      */
     private function customer_is_tax_exempt_for_class( $tax_class = '' ) {
+        $this->debug_log( '--- customer_is_tax_exempt_for_class() START --- tax_class="' . $tax_class . '"' );
+
+        // Dump the full WC()->customer object for diagnosis.
+        if ( ! empty( WC()->customer ) ) {
+            $customer = WC()->customer;
+            $this->debug_log( 'WC()->customer exists. Key properties:' );
+            $this->debug_log( '  is_vat_exempt: ' . var_export( $customer->get_is_vat_exempt(), true ) );
+            $this->debug_log( '  billing_country: ' . $customer->get_billing_country() );
+            $this->debug_log( '  billing_state: ' . $customer->get_billing_state() );
+            $this->debug_log( '  billing_postcode: ' . $customer->get_billing_postcode() );
+            $this->debug_log( '  billing_city: ' . $customer->get_billing_city() );
+            $this->debug_log( '  shipping_country: ' . $customer->get_shipping_country() );
+            $this->debug_log( '  shipping_state: ' . $customer->get_shipping_state() );
+            $this->debug_log( '  shipping_postcode: ' . $customer->get_shipping_postcode() );
+            $this->debug_log( '  shipping_city: ' . $customer->get_shipping_city() );
+            $this->debug_log( '  calculated_shipping: ' . var_export( $customer->has_calculated_shipping(), true ) );
+            $this->debug_log( '  get_taxable_address(): ' . wp_json_encode( $customer->get_taxable_address() ) );
+            $this->debug_log( '  customer ID: ' . $customer->get_id() );
+        } else {
+            $this->debug_log( 'WC()->customer is EMPTY/NULL' );
+        }
+
+        // Log WooCommerce tax settings.
+        $this->debug_log( 'WC Settings:' );
+        $this->debug_log( '  woocommerce_tax_based_on: ' . get_option( 'woocommerce_tax_based_on' ) );
+        $this->debug_log( '  woocommerce_default_customer_address: ' . get_option( 'woocommerce_default_customer_address' ) );
+        $this->debug_log( '  woocommerce_prices_include_tax: ' . get_option( 'woocommerce_prices_include_tax' ) );
+        $this->debug_log( '  woocommerce_tax_display_shop: ' . get_option( 'woocommerce_tax_display_shop' ) );
+
+        // Log base store location.
+        $base_country = WC()->countries->get_base_country();
+        $base_state   = WC()->countries->get_base_state();
+        $this->debug_log( '  Base store country: ' . $base_country );
+        $this->debug_log( '  Base store state: ' . $base_state );
+
         // Explicitly marked VAT-exempt (e.g. via EU VAT number plugin).
         if ( ! empty( WC()->customer ) && WC()->customer->get_is_vat_exempt() ) {
+            $this->debug_log( 'RESULT: Customer is explicitly VAT-exempt => returning TRUE' );
             return true;
         }
 
@@ -194,27 +247,43 @@ class WC_AJAX_Pricing {
         $location = $this->get_customer_tax_location();
 
         if ( empty( $location ) ) {
-            // No location available — cannot determine; assume not exempt.
+            $this->debug_log( 'RESULT: No tax location available => returning FALSE (not exempt)' );
             return false;
         }
+
+        $this->debug_log( 'Resolved tax location: country=' . $location[0] . ', state=' . $location[1] . ', postcode=' . ( $location[2] ?? '' ) . ', city=' . ( $location[3] ?? '' ) );
 
         // If the customer location is the same as the base store location,
         // they are definitely not exempt (they pay the base tax).
-        $base_country  = WC()->countries->get_base_country();
-        $base_state    = WC()->countries->get_base_state();
-
         if ( $location[0] === $base_country && $location[1] === $base_state ) {
+            $this->debug_log( 'RESULT: Customer location matches base store (country=' . $base_country . ', state=' . $base_state . ') => returning FALSE (not exempt)' );
             return false;
         }
 
+        $this->debug_log( 'Customer location differs from base store. Looking up tax rates for customer location...' );
+
         // Look up tax rates for the customer's location.
+        $sanitized_tax_class = sanitize_title( $tax_class );
+        $this->debug_log( 'Calling WC_Tax::get_rates_from_location( tax_class="' . $sanitized_tax_class . '", location=' . wp_json_encode( $location ) . ' )' );
+
         $customer_rates = WC_Tax::get_rates_from_location(
-            sanitize_title( $tax_class ),
+            $sanitized_tax_class,
             $location
         );
 
+        $this->debug_log( 'Customer tax rates found: ' . wp_json_encode( $customer_rates ) );
+        $this->debug_log( 'Number of customer tax rates: ' . count( $customer_rates ) );
+
+        // Also log what the base rates are for comparison.
+        $base_rates = WC_Tax::get_base_tax_rates( $tax_class );
+        $this->debug_log( 'Base store tax rates for comparison: ' . wp_json_encode( $base_rates ) );
+
+        $is_exempt = empty( $customer_rates );
+        $this->debug_log( 'RESULT: customer_is_tax_exempt_for_class => ' . var_export( $is_exempt, true ) );
+        $this->debug_log( '--- customer_is_tax_exempt_for_class() END ---' );
+
         // If no rates match the customer's location, they are tax-exempt.
-        return empty( $customer_rates );
+        return $is_exempt;
     }
 
     /**
@@ -239,40 +308,88 @@ class WC_AJAX_Pricing {
      * @return string|float Adjusted price with base tax removed, or original price.
      */
     public function adjust_variation_price_for_tax_exempt( $price, $variation, $product ) {
+        static $call_count = 0;
+        $call_count++;
+
+        // Only log details for the first variation per page load to avoid flooding.
+        $should_log = ( $call_count <= 3 );
+
+        if ( $should_log ) {
+            $current_filter = current_filter();
+            $this->debug_log( '=== adjust_variation_price_for_tax_exempt() CALLED ===' );
+            $this->debug_log( '  Filter: ' . $current_filter );
+            $this->debug_log( '  Variation ID: ' . $variation->get_id() );
+            $this->debug_log( '  Parent product ID: ' . $product->get_id() );
+            $this->debug_log( '  Input price: ' . var_export( $price, true ) );
+            $this->debug_log( '  wc_tax_enabled(): ' . var_export( wc_tax_enabled(), true ) );
+            $this->debug_log( '  wc_prices_include_tax(): ' . var_export( wc_prices_include_tax(), true ) );
+        }
+
         // Only act when prices were entered inclusive of tax.
         if ( ! wc_tax_enabled() || ! wc_prices_include_tax() ) {
+            if ( $should_log ) {
+                $this->debug_log( '  EARLY EXIT: Tax not enabled or prices do not include tax' );
+            }
             return $price;
         }
 
         // Nothing to adjust on empty prices.
         if ( '' === $price || ! is_numeric( $price ) ) {
+            if ( $should_log ) {
+                $this->debug_log( '  EARLY EXIT: Price is empty or non-numeric' );
+            }
             return $price;
         }
 
         // Only adjust for taxable products.
         if ( ! $variation->is_taxable() ) {
+            if ( $should_log ) {
+                $this->debug_log( '  EARLY EXIT: Variation is not taxable' );
+            }
             return $price;
         }
 
         // Check if the customer is effectively tax-exempt for this tax class.
         $tax_class = $variation->get_tax_class( 'unfiltered' );
 
+        if ( $should_log ) {
+            $this->debug_log( '  Variation tax_class (unfiltered): "' . $tax_class . '"' );
+            $this->debug_log( '  Variation tax_status: ' . $variation->get_tax_status() );
+        }
+
         if ( ! $this->customer_is_tax_exempt_for_class( $tax_class ) ) {
+            if ( $should_log ) {
+                $this->debug_log( '  RESULT: Customer is NOT tax-exempt => returning original price: ' . $price );
+            }
             return $price;
         }
 
         // Get the base store tax rates for this product's tax class.
         $base_rates = WC_Tax::get_base_tax_rates( $tax_class );
 
+        if ( $should_log ) {
+            $this->debug_log( '  Customer IS tax-exempt. Base rates: ' . wp_json_encode( $base_rates ) );
+        }
+
         if ( empty( $base_rates ) ) {
+            if ( $should_log ) {
+                $this->debug_log( '  RESULT: No base rates found => returning original price: ' . $price );
+            }
             return $price;
         }
 
         // Calculate the tax that is embedded in the inclusive price and subtract it.
         $taxes      = WC_Tax::calc_tax( (float) $price, $base_rates, true );
         $tax_amount = array_sum( $taxes );
+        $new_price  = (float) $price - $tax_amount;
 
-        return (float) $price - $tax_amount;
+        if ( $should_log ) {
+            $this->debug_log( '  Taxes calculated (inclusive): ' . wp_json_encode( $taxes ) );
+            $this->debug_log( '  Tax amount to subtract: ' . $tax_amount );
+            $this->debug_log( '  RESULT: Adjusted price: ' . $price . ' - ' . $tax_amount . ' = ' . $new_price );
+        }
+
+        return $new_price;
     }
 
     /**
@@ -297,7 +414,10 @@ class WC_AJAX_Pricing {
         $location = $this->get_customer_tax_location();
 
         // Add the full tax location so each unique location gets its own cache.
-        $price_hash[] = 'tax_location_' . implode( '_', $location );
+        $location_string = 'tax_location_' . implode( '_', $location );
+        $price_hash[] = $location_string;
+
+        $this->debug_log( 'add_tax_location_to_prices_hash() => added "' . $location_string . '" to hash for product #' . $product->get_id() . ' (for_display=' . var_export( $for_display, true ) . ')' );
 
         return $price_hash;
     }

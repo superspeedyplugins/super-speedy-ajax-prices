@@ -27,6 +27,24 @@ class WC_AJAX_Pricing {
         // cache entries. We must add that context explicitly so that two users
         // with different tax profiles cannot share the same cached prices.
         add_filter('woocommerce_get_variation_prices_hash', array($this, 'add_user_context_to_variation_prices_hash'), 10, 3);
+
+        // Fix WooCommerce 10.4+ tax/price display bug.
+        //
+        // WooCommerce never automatically sets is_vat_exempt based on the
+        // customer's location. When a customer is in a non-tax country (e.g.
+        // UK/US for an EU shop) — whether via geolocation, manual address
+        // change at checkout, or session data — WC_Tax::get_rates() returns
+        // empty. The taxes_influence_price() method (added in WC 10.4)
+        // incorrectly treats empty rates as "taxes don't matter" and reuses
+        // the tax-inclusive cached price for non-tax visitors.
+        //
+        // This fix detects when a customer has no applicable tax rates but
+        // the shop base location does, and sets them as VAT exempt. This
+        // ensures correct price display for both simple and variable products
+        // regardless of how the customer's location was determined.
+        //
+        // Hook on 'wp' for normal page loads (after WC customer is initialised).
+        add_action( 'wp', array( $this, 'maybe_set_vat_exempt_from_geolocation' ), 20 );
         
         // Include admin settings
         require_once WC_AJAX_PRICING_PATH . 'admin/settings-page.php';
@@ -118,6 +136,11 @@ class WC_AJAX_Pricing {
     public function get_ajax_prices() {
         // Verify nonce
         check_ajax_referer('wc-ajax-pricing-nonce', 'nonce');
+
+        // Ensure VAT exempt status is set before calculating prices.
+        // The 'wp' action does not fire during AJAX requests, so we must
+        // call the geolocation-based VAT exempt check here explicitly.
+        $this->maybe_set_vat_exempt_from_geolocation();
         
         // Get product IDs from request
         $product_ids = isset($_POST['product_ids']) ? array_map('absint', $_POST['product_ids']) : array();
@@ -151,6 +174,66 @@ class WC_AJAX_Pricing {
     }
 
     /**
+     * Detect when a customer should be VAT exempt and set the flag.
+     *
+     * WooCommerce never automatically sets is_vat_exempt based on the
+     * customer's location — regardless of whether that location comes from
+     * geolocation, a manual address change at checkout, or session data.
+     * When the customer is in a country with no configured tax rates, this
+     * causes two problems since WC 10.4:
+     *
+     * 1. Variable products: taxes_influence_price() returns false when
+     *    WC_Tax::get_rates() is empty, causing the price cache to share
+     *    entries between taxed (EU) and non-taxed (UK/US) visitors.
+     *
+     * 2. Simple products: wc_get_price_including_tax() checks is_vat_exempt
+     *    to decide whether to strip VAT. Without this flag, it falls through
+     *    to a secondary branch that only works on fresh calculations, not
+     *    when prices are served from cache.
+     *
+     * This method checks whether the customer's tax rates are empty while
+     * the shop base location has rates, and if so, sets the customer as
+     * VAT exempt. This is safe because:
+     * - It only runs when prices are entered inclusive of tax
+     * - It only sets exempt when there genuinely are no tax rates for the
+     *   customer's location but the base location does have rates
+     * - The flag is session-based and does not persist to the database
+     *
+     * @since 1.0.3
+     */
+    public function maybe_set_vat_exempt_from_geolocation() {
+        // Guard: need WooCommerce, tax enabled, and a customer object.
+        if ( ! function_exists( 'WC' ) || ! wc_tax_enabled() || empty( WC()->customer ) ) {
+            return;
+        }
+
+        // Only relevant when prices are entered inclusive of tax.
+        if ( ! wc_prices_include_tax() ) {
+            return;
+        }
+
+        // If the customer is already marked as VAT exempt (e.g. by another
+        // plugin or a valid VAT number check), don't interfere.
+        if ( WC()->customer->get_is_vat_exempt() ) {
+            return;
+        }
+
+        // Get the tax rates that apply to the customer's current address.
+        // We use the default (standard) tax class — if there are no standard
+        // rates for the customer, there won't be reduced rates either.
+        $customer_tax_rates = WC_Tax::get_rates( '' );
+
+        // Get the base (shop) tax rates for comparison.
+        $base_tax_rates = WC_Tax::get_base_tax_rates( '' );
+
+        // If the customer has no applicable tax rates but the shop base does,
+        // the customer is in a non-tax jurisdiction and should be VAT exempt.
+        if ( empty( $customer_tax_rates ) && ! empty( $base_tax_rates ) ) {
+            WC()->customer->set_is_vat_exempt( true );
+        }
+    }
+
+    /**
      * Add user-specific tax context to the variation prices cache hash.
      *
      * WooCommerce 10.5 (PR #61286) changed hash generation so it no longer
@@ -160,20 +243,40 @@ class WC_AJAX_Pricing {
      * tax profile from another so that each unique combination gets its own
      * cache entry while still allowing users with identical profiles to share.
      *
+     * The address fields added to the hash respect the "Calculate tax based on"
+     * setting (WooCommerce > Settings > Tax):
+     * - "Customer shipping address" → shipping country + state
+     * - "Customer billing address"  → billing country + state
+     * - "Shop base address"         → no per-customer location needed (all
+     *   customers share the same base tax rates)
+     *
+     * In all cases we include is_vat_exempt, which correctly reflects the
+     * fix from maybe_set_vat_exempt_from_geolocation() because that method
+     * runs on the 'wp' hook (priority 20) before prices are rendered, and
+     * during AJAX it is called explicitly at the start of get_ajax_prices().
+     *
      * @param array      $price_hash  Existing hash components.
      * @param WC_Product $product     The variable product.
      * @param bool       $for_display Whether prices are for display (inc. tax).
      * @return array
      */
     public function add_user_context_to_variation_prices_hash( $price_hash, $product, $for_display ) {
-        $price_hash[] = get_current_user_id();
-
         if ( WC()->customer ) {
             $price_hash[] = (int) WC()->customer->get_is_vat_exempt();
-            $price_hash[] = WC()->customer->get_billing_country();
-            $price_hash[] = WC()->customer->get_billing_state();
-            $price_hash[] = WC()->customer->get_shipping_country();
-            $price_hash[] = WC()->customer->get_shipping_state();
+
+            $tax_based_on = get_option( 'woocommerce_tax_based_on', 'shipping' );
+
+            if ( 'billing' === $tax_based_on ) {
+                $price_hash[] = WC()->customer->get_billing_country();
+                $price_hash[] = WC()->customer->get_billing_state();
+            } elseif ( 'base' !== $tax_based_on ) {
+                // Default: shipping address (also the fallback for any
+                // unrecognised value of the option).
+                $price_hash[] = WC()->customer->get_shipping_country();
+                $price_hash[] = WC()->customer->get_shipping_state();
+            }
+            // When 'base', all customers share the same shop base tax
+            // location, so no per-customer location is needed in the hash.
         }
 
         return $price_hash;

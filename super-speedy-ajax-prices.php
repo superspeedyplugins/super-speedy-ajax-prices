@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Super Speedy AJAX Prices
  * Description: Enables AJAX pricing for WooCommerce to work with full page caching
- * Version: 1.0.2
+ * Version: 1.0.3
  * Author: Dave Hilditch
  * Text Domain: wc-ajax-pricing
  */
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 // Define plugin constants
 define('WC_AJAX_PRICING_PATH', plugin_dir_path(__FILE__));
 define('WC_AJAX_PRICING_URL', plugin_dir_url(__FILE__));
-define('WC_AJAX_PRICING_VERSION', '1.0.0');
+define('WC_AJAX_PRICING_VERSION', '1.0.3');
 
 // Include required files
 require_once WC_AJAX_PRICING_PATH . 'includes/class-wc-ajax-pricing.php';

@@ -13,6 +13,12 @@ class WC_AJAX_Pricing {
         // Register scripts and styles
         add_action('wp_enqueue_scripts', array($this, 'register_scripts'), 10);
         
+        // Fix prices for tax-exempt (non-EU) customers on shop/archive/product pages.
+        // WooCommerce intentionally shows base EU prices on these pages for performance,
+        // only applying customer-location tax at cart/checkout. We intercept earlier
+        // (priority 9) to rebuild the price HTML with ex-VAT amounts when needed.
+        add_filter('woocommerce_get_price_html', array($this, 'fix_price_html_for_tax_exempt_customers'), 9, 2);
+
         // Filter WooCommerce price HTML to add placeholders
         add_filter('woocommerce_get_price_html', array($this, 'replace_price_with_placeholder'), 10, 2);
         
@@ -238,6 +244,118 @@ class WC_AJAX_Pricing {
         if ( empty( $customer_tax_rates ) && ! empty( $base_tax_rates ) ) {
             WC()->customer->set_is_vat_exempt( true );
         }
+    }
+
+    /**
+     * Fix price HTML for tax-exempt (non-EU) customers on shop/archive/product pages.
+     *
+     * WooCommerce intentionally shows base EU prices on archive/shop pages for
+     * performance, applying customer-location tax only at cart/checkout. This means
+     * non-EU customers (UK, USA, etc.) see VAT-inclusive prices everywhere except
+     * the cart — even with transients cleared and no page cache.
+     *
+     * We detect tax-exempt customers by comparing wc_get_price_including_tax() and
+     * wc_get_price_excluding_tax(): for non-EU customers both functions return the
+     * same ex-VAT amount (empty customer rates → no tax applied), so their
+     * difference is < 0.01. When that is the case, we rebuild the price HTML using
+     * ex-VAT prices so the correct amount is displayed before the cart.
+     *
+     * Runs at priority 9, before replace_price_with_placeholder at priority 10.
+     *
+     * @param string     $price_html The price HTML.
+     * @param WC_Product $product    The product object.
+     * @return string
+     * @since 1.0.4
+     */
+    public function fix_price_html_for_tax_exempt_customers( $price_html, $product ) {
+        if ( is_admin() || ! wc_tax_enabled() || ! wc_prices_include_tax() ) {
+            return $price_html;
+        }
+
+        if ( empty( WC()->customer ) ) {
+            return $price_html;
+        }
+
+        // Detect whether the customer has applicable tax rates by comparing
+        // inc/exc tax prices. For non-EU customers (empty rates), both functions
+        // return the same ex-VAT amount, so their difference will be near zero.
+        if ( $product->is_type( 'variable' ) ) {
+            $prices = $product->get_variation_prices( false );
+            if ( empty( $prices['price'] ) ) {
+                return $price_html;
+            }
+            $min_price   = min( $prices['price'] );
+            $with_tax    = wc_get_price_including_tax( $product, array( 'price' => $min_price ) );
+            $without_tax = wc_get_price_excluding_tax( $product, array( 'price' => $min_price ) );
+        } else {
+            $with_tax    = wc_get_price_including_tax( $product );
+            $without_tax = wc_get_price_excluding_tax( $product );
+        }
+
+        // If the customer has applicable tax rates, no adjustment needed.
+        if ( abs( $with_tax - $without_tax ) >= 0.01 ) {
+            return $price_html;
+        }
+
+        // Customer is in a non-tax jurisdiction — rebuild price HTML with ex-VAT prices.
+        $suffix = $product->get_price_suffix();
+
+        if ( $product->is_type( 'variable' ) ) {
+            return $this->get_variable_price_html_ex_tax( $product, $suffix );
+        }
+
+        return $this->get_simple_price_html_ex_tax( $product, $suffix );
+    }
+
+    /**
+     * Build ex-VAT price HTML for a simple (or non-variable) product.
+     *
+     * @param WC_Product $product The product.
+     * @param string     $suffix  Price suffix HTML from get_price_suffix().
+     * @return string
+     */
+    private function get_simple_price_html_ex_tax( $product, $suffix ) {
+        $regular_price = $product->get_regular_price();
+
+        if ( '' === $regular_price ) {
+            return apply_filters( 'woocommerce_empty_price_html', '', $product );
+        }
+
+        $ex_regular = wc_get_price_excluding_tax( $product, array( 'price' => $regular_price ) );
+
+        if ( $product->is_on_sale() && '' !== $product->get_sale_price() ) {
+            $ex_sale = wc_get_price_excluding_tax( $product, array( 'price' => $product->get_sale_price() ) );
+            return wc_format_sale_price( $ex_regular, $ex_sale ) . $suffix;
+        }
+
+        return wc_price( $ex_regular ) . $suffix;
+    }
+
+    /**
+     * Build ex-VAT price HTML for a variable product.
+     *
+     * @param WC_Product_Variable $product The variable product.
+     * @param string              $suffix  Price suffix HTML from get_price_suffix().
+     * @return string
+     */
+    private function get_variable_price_html_ex_tax( $product, $suffix ) {
+        $prices = $product->get_variation_prices( false );
+
+        if ( empty( $prices['price'] ) ) {
+            return apply_filters( 'woocommerce_empty_price_html', '', $product );
+        }
+
+        $min_price = min( $prices['price'] );
+        $max_price = max( $prices['price'] );
+
+        $ex_min = wc_get_price_excluding_tax( $product, array( 'price' => $min_price ) );
+        $ex_max = wc_get_price_excluding_tax( $product, array( 'price' => $max_price ) );
+
+        if ( abs( $ex_min - $ex_max ) < 0.01 ) {
+            return wc_price( $ex_min ) . $suffix;
+        }
+
+        return wc_format_price_range( $ex_min, $ex_max ) . $suffix;
     }
 
     /**

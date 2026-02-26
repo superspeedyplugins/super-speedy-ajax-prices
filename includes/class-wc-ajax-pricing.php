@@ -163,6 +163,7 @@ class WC_AJAX_Pricing {
      * @param string $message The message to log.
      */
     private function debug_log( $message ) {
+        if (!WC_AJAX_PRICING_VERBOSE_LOGGING) return;
         if ( 1==2 && function_exists( 'wc_get_logger' ) ) {
             wc_get_logger()->debug( $message, array( 'source' => 'super-speedy-tax-debug' ) );
         } else {
@@ -239,8 +240,10 @@ class WC_AJAX_Pricing {
 
         // Explicitly marked VAT-exempt (e.g. via EU VAT number plugin).
         if ( ! empty( WC()->customer ) && WC()->customer->get_is_vat_exempt() ) {
-            $this->debug_log( 'RESULT: Customer is explicitly VAT-exempt => returning TRUE' );
-            return true;
+            $this->debug_log( 'RESULT: Customer is explicitly VAT-exempt => THIS IS WHERE THE WOO BUG EXISTS' );
+            if (WC_AJAX_PRICING_TRUST_VAT_EXEMPT) {
+                return true;
+            }
         }
 
         // Resolve the customer's tax location.

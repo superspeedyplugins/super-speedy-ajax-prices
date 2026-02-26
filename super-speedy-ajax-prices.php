@@ -12,10 +12,15 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+require_once(plugin_dir_path(__FILE__) . 'super-speedy-settings/super-speedy-settings.php');
+$plugin_data = get_file_data(__FILE__, array('Version' => 'Version'));
+define('SSAP_VERSION', $plugin_data['Version']);
+SuperSpeedySettings_1_0::init(array('plugin_slug' => 'super-speedy-ajax-prices', 'version' => SSAP_VERSION, 'file' => __FILE__));
+
 // Define plugin constants
 define('WC_AJAX_PRICING_PATH', plugin_dir_path(__FILE__));
 define('WC_AJAX_PRICING_URL', plugin_dir_url(__FILE__));
-define('WC_AJAX_PRICING_VERSION', '1.0.4');
+define('WC_AJAX_PRICING_VERSION', SSAP_VERSION);
 if (!defined('WC_AJAX_PRICING_VERBOSE_LOGGING')) {
     define('WC_AJAX_PRICING_VERBOSE_LOGGING', false);
 }

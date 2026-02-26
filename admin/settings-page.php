@@ -13,9 +13,9 @@ if (!defined('ABSPATH')) {
  */
 function wc_ajax_pricing_add_admin_menu() {
     add_submenu_page(
-        'woocommerce',
+        'superspeedy',
         __('Super Speedy AJAX Prices', 'wc-ajax-pricing'),
-        __('AJAX Pricing', 'wc-ajax-pricing'),
+        __('AJAX Prices', 'wc-ajax-pricing'),
         'manage_options',
         'wc-ajax-pricing-settings',
         'wc_ajax_pricing_render_settings_page'

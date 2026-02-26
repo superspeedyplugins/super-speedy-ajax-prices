@@ -146,6 +146,26 @@ function wc_ajax_pricing_register_settings() {
         'wc_ajax_pricing_general_section'
     );
     
+    // Register setting for VAT-exempt price fix
+    register_setting(
+        'wc_ajax_pricing_settings',
+        'wc_ajax_pricing_vat_exempt_fix',
+        array(
+            'type' => 'string',
+            'sanitize_callback' => 'sanitize_text_field',
+            'default' => 'no'
+        )
+    );
+
+    // Add field for VAT-exempt price fix
+    add_settings_field(
+        'wc_ajax_pricing_vat_exempt_fix',
+        __('Fix prices for VAT-exempt locations', 'wc-ajax-pricing'),
+        'wc_ajax_pricing_render_vat_exempt_fix_field',
+        'wc_ajax_pricing_settings',
+        'wc_ajax_pricing_general_section'
+    );
+
     // Register setting for loading text
     register_setting(
         'wc_ajax_pricing_settings',
@@ -203,6 +223,22 @@ function wc_ajax_pricing_render_disable_for_logged_in_field() {
     </label>
     <p class="description">
         <?php _e('When enabled, regular pricing will be used instead of AJAX pricing for logged in users. This is useful because most page cache systems disable caching for logged in users.', 'wc-ajax-pricing'); ?>
+    </p>
+    <?php
+}
+
+/**
+ * Render field for VAT-exempt price fix
+ */
+function wc_ajax_pricing_render_vat_exempt_fix_field() {
+    $value = get_option('wc_ajax_pricing_vat_exempt_fix', 'no');
+    ?>
+    <label>
+        <input type="checkbox" name="wc_ajax_pricing_vat_exempt_fix" value="yes" <?php checked('yes', $value); ?> />
+        <?php _e('Remove base-country VAT from prices shown to customers in VAT-exempt locations', 'wc-ajax-pricing'); ?>
+    </label>
+    <p class="description">
+        <?php _e('Enable this if your store is configured with "I will enter prices inclusive of tax" and you sell to countries or regions where no VAT applies. By default, WooCommerce still displays prices with the base-country VAT included on archive and product pages for those customers. Enabling this option corrects that by stripping the embedded base tax from variation prices when the customer\'s resolved location has no matching tax rates.', 'wc-ajax-pricing'); ?>
     </p>
     <?php
 }

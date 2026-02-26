@@ -4,7 +4,7 @@ Donate link: https://www.superspeedyplugins.com/
 Tags: ajax, pricing, woocommerce, caching, speed
 Requires at least: 5.0
 Tested up to: 6.7
-Stable tag: 1.0.6
+Stable tag: 1.0.7
 Requires PHP: 7.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -28,6 +28,10 @@ Yes, that is the primary use case. Configure your caching plugin to cache WooCom
 Yes, both simple and variable products are supported.
 
 == Changelog ==
+
+= 1.0.7 (26th February 2026) =
+* Added settings option to enable VAT-exempt price fix (disabled by default)
+* VAT-exempt variation price logic now only runs when explicitly enabled in settings
 
 = 1.0.6 (26th February 2026) =
 * Added super-speedy-settings integration for licence management and auto-updates

@@ -20,15 +20,17 @@ class WC_AJAX_Pricing {
         add_action('wp_ajax_get_wc_prices', array($this, 'get_ajax_prices'));
         add_action('wp_ajax_nopriv_get_wc_prices', array($this, 'get_ajax_prices'));
 
-        // Fix variation prices for tax-exempt locations.
+        // Fix variation prices for tax-exempt locations (opt-in via settings).
         // When prices are entered inclusive of tax and the customer is in a
         // location with no tax, the base-country tax must be subtracted from
         // the raw variation prices so archive/product pages show the correct
         // ex-tax amount. We hook all three price filters and the hash filter.
-        add_filter('woocommerce_variation_prices_price', array($this, 'adjust_variation_price_for_tax_exempt'), 10, 3);
-        add_filter('woocommerce_variation_prices_regular_price', array($this, 'adjust_variation_price_for_tax_exempt'), 10, 3);
-        add_filter('woocommerce_variation_prices_sale_price', array($this, 'adjust_variation_price_for_tax_exempt'), 10, 3);
-        add_filter('woocommerce_get_variation_prices_hash', array($this, 'add_tax_location_to_prices_hash'), 10, 3);
+        if ( get_option( 'wc_ajax_pricing_vat_exempt_fix', 'no' ) === 'yes' ) {
+            add_filter('woocommerce_variation_prices_price', array($this, 'adjust_variation_price_for_tax_exempt'), 10, 3);
+            add_filter('woocommerce_variation_prices_regular_price', array($this, 'adjust_variation_price_for_tax_exempt'), 10, 3);
+            add_filter('woocommerce_variation_prices_sale_price', array($this, 'adjust_variation_price_for_tax_exempt'), 10, 3);
+            add_filter('woocommerce_get_variation_prices_hash', array($this, 'add_tax_location_to_prices_hash'), 10, 3);
+        }
 
         // Include admin settings
         require_once WC_AJAX_PRICING_PATH . 'admin/settings-page.php';

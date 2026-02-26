@@ -29,26 +29,26 @@ Yes, both simple and variable products are supported.
 
 == Changelog ==
 
-= 1.0.6 =
+= 1.0.6 (26th February 2026) =
 * Added super-speedy-settings integration for licence management and auto-updates
 * Moved settings page under Super Speedy top-level menu
 
-= 1.0.5 =
+= 1.0.5 (26th February 2026) =
 * Added admin settings page
 * Added auto-update support
 
-= 1.0.4 =
+= 1.0.4 (26th February 2026) =
 * Added VAT exempt logic for price determination to improve pricing for large EU stores who sell outside EU
 * Fixed detection of when a user is truly tax exempt
 
-= 1.0.3 =
+= 1.0.3 (25th February 2026) =
 * Reworked variation price override to correctly handle tax-exempt locations
 
-= 1.0.2 =
+= 1.0.2 (23rd February 2026) =
 * Added user context to variation prices cache hash to fix variation pricing for tax-exempt locations
 
-= 1.0.1 =
+= 1.0.1 (25th April 2025) =
 * Added option to disable AJAX pricing when cart has items or user is logged in
 
-= 1.0.0 =
+= 1.0.0 (25th April 2025) =
 * Initial release

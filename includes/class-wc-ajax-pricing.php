@@ -338,6 +338,17 @@ class WC_AJAX_Pricing {
             return $price;
         }
 
+        // WooCommerce's own display-tax adjustment (wc_get_price_excluding_tax /
+        // wc_get_price_including_tax) still runs correctly for variable products
+        // with a single visible variation in WC 10.4+. Running our filter as well
+        // would strip the base tax twice. Skip when there is exactly one visible child.
+        if ( count( $product->get_visible_children() ) === 1 ) {
+            if ( $should_log ) {
+                $this->debug_log( '  EARLY EXIT: Single-variation product — WooCommerce handles tax adjustment natively' );
+            }
+            return $price;
+        }
+
         // Nothing to adjust on empty prices.
         if ( '' === $price || ! is_numeric( $price ) ) {
             if ( $should_log ) {
